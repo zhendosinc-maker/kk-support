@@ -171,6 +171,7 @@ jobs:
           Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_dark.png -Force
           Copy-Item kk-overlay/brand-assets/favicon.ico flutter/windows/runner/resources/app_icon.ico -Force
           Copy-Item kk-overlay/integration-overlay/flutter/lib/common.dart flutter/lib/common.dart -Force
+          Copy-Item kk-overlay/integration-overlay/flutter/lib/desktop/pages/desktop_home_page.dart flutter/lib/desktop/pages/desktop_home_page.dart -Force
 
       - name: Restore bridge files
         uses: actions/download-artifact@v4
@@ -254,7 +255,7 @@ jobs:
       - name: Validate branded Dart source
         shell: pwsh
         run: |
-          dart format --output=none flutter/lib/common.dart
+          dart format --output=none flutter/lib/common.dart flutter/lib/desktop/pages/desktop_home_page.dart
           if ($LASTEXITCODE -ne 0) { throw "Branded Dart syntax validation failed" }
           $src = Get-Content flutter/lib/common.dart -Raw -Encoding UTF8
           if (-not $src.Contains('0xFFE07B00') -or -not $src.Contains('Segoe UI')) { throw "Brand overlay missing" }
