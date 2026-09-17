@@ -1,0 +1,334 @@
+name: KK Branded Client Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.75"
+  FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
+  CARGO_EXPAND_VERSION: "1.0.95"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  TOPMOST_WINDOW_COMMIT: "ecd8d6a139eee76845ea66423fb739af450fda90"
+  VERSION: "1.4.9"
+  VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+
+jobs:
+  generate-bridge:
+    name: Generate Flutter Rust Bridge
+    timeout-minutes: 60
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: 6c578292e8ebbbec708b76986ba8c4bc7c509747
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Checkout integration overlay
+        uses: actions/checkout@v4
+        with:
+          path: kk-overlay
+          persist-credentials: false
+          sparse-checkout: integration-overlay
+      - name: Apply exact reviewed source overlay
+        shell: bash
+        run: |
+          cp kk-overlay/integration-overlay/src/org_defaults.rs src/org_defaults.rs
+          cp kk-overlay/integration-overlay/src/common.rs src/common.rs
+          cp kk-overlay/integration-overlay/src/lib.rs src/lib.rs
+
+      - name: Prepare brand assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force flutter/assets | Out-Null
+          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo.png -Force
+          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_light.png -Force
+          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_dark.png -Force
+          Copy-Item kk-overlay/brand-assets/icon-512x512.png flutter/windows/runner/resources/app_icon.ico -Force
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            ca-certificates clang cmake curl gcc git g++ \
+            libclang-dev libgtk-3-dev llvm-dev nasm ninja-build pkg-config wget
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-unknown-linux-gnu
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: bridge-ubuntu-22.04
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.22.3
+          cache: true
+
+      - name: Install Flutter Rust Bridge codegen
+        shell: bash
+        run: |
+          cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
+          cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid" --locked
+          sed -i -e 's/extended_text: 14.0.0/extended_text: 13.0.0/g' flutter/pubspec.yaml
+          pushd flutter && flutter pub get && popd
+
+      - name: Run Flutter Rust Bridge codegen
+        run: |
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+          cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
+
+      - name: Upload Bridge Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-artifact
+          path: |
+            ./src/bridge_generated.rs
+            ./src/bridge_generated.io.rs
+            ./flutter/lib/generated_bridge.dart
+            ./flutter/lib/generated_bridge.freezed.dart
+            ./flutter/macos/Runner/bridge_generated.h
+            ./flutter/ios/Runner/bridge_generated.h
+
+  build-topmost-window:
+    name: Build RustDeskTempTopMostWindow DLL
+    timeout-minutes: 180
+    runs-on: windows-2022
+    steps:
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Download source code
+        run: |
+          git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow RustDeskTempTopMostWindow
+          cd RustDeskTempTopMostWindow
+          git checkout ${{ env.TOPMOST_WINDOW_COMMIT }}
+
+      - name: Build WindowInjection DLL
+        run: |
+          cd RustDeskTempTopMostWindow
+          msbuild WindowInjection/WindowInjection.vcxproj -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+
+      - name: Upload TopMostWindow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: topmostwindow-artifacts-x64
+          path: RustDeskTempTopMostWindow/WindowInjection/x64/Release/WindowInjection.dll
+
+  build-windows-x64:
+    name: Build RustDesk Windows x64 (Flutter)
+    needs: [generate-bridge, build-topmost-window]
+    timeout-minutes: 180
+    runs-on: windows-2022
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: 6c578292e8ebbbec708b76986ba8c4bc7c509747
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Checkout integration overlay
+        uses: actions/checkout@v4
+        with:
+          path: kk-overlay
+          persist-credentials: false
+          sparse-checkout: integration-overlay
+      - name: Apply exact reviewed source overlay
+        shell: bash
+        run: |
+          cp kk-overlay/integration-overlay/src/org_defaults.rs src/org_defaults.rs
+          cp kk-overlay/integration-overlay/src/common.rs src/common.rs
+          cp kk-overlay/integration-overlay/src/lib.rs src/lib.rs
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        id: flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      - name: Replace engine with RustDesk custom flutter engine
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          $flutterPath = if ("${{ steps.flutter.outputs.flutter-path }}") { "${{ steps.flutter.outputs.flutter-path }}" } elseif ($env:FLUTTER_ROOT) { $env:FLUTTER_ROOT } else { (Get-Item (Get-Command flutter).Source).Directory.Parent.FullName }
+          Write-Host "Flutter SDK Path: $flutterPath"
+          $dest = Join-Path $flutterPath "bin\cache\artifacts\engine\windows-x64-release"
+          if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Force -Path $dest }
+          mv -Force windows-x64-release/* "$dest/"
+
+      - name: Patch Flutter
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+          cd $(dirname $(dirname $(which flutter)))
+          git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: windows-2022
+
+      - name: Setup vcpkg with GitHub Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          if ! $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              echo "======"
+              cat "$_1"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+        shell: bash
+
+      - name: Download RustDeskTempTopMostWindow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: topmostwindow-artifacts-x64
+          path: ./rustdesk
+
+      - name: Build RustDesk
+        run: |
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          if ($LASTEXITCODE -ne 0) { throw "RustDesk build failed" }
+          Copy-Item ./flutter/build/windows/x64/runner/Release/* ./rustdesk/ -Recurse -Force
+
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath .
+          Remove-Item -Path usbmmidd_v2\Win32 -Recurse
+          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
+          mv -Force .\usbmmidd_v2 ./rustdesk
+
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip -OutFile rustdesk_printer_driver_v4-1.4.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/sha256sums -OutFile sha256sums
+
+            $checksum_driver = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*rustdesk_printer_driver_v4-1.4\.zip$').Matches.Groups[1].Value
+            $downloadsum_driver = Get-FileHash -Path rustdesk_printer_driver_v4-1.4.zip -Algorithm SHA256
+            $checksum_adapter = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*printer_driver_adapter\.zip$').Matches.Groups[1].Value
+            $downloadsum_adapter = Get-FileHash -Path printer_driver_adapter.zip -Algorithm SHA256
+            if ($checksum_driver -eq $downloadsum_driver.Hash -and $checksum_adapter -eq $downloadsum_adapter.Hash) {
+                Write-Output "rustdesk_printer_driver_v4-1.4, checksums match, extract the file."
+                Expand-Archive rustdesk_printer_driver_v4-1.4.zip -DestinationPath .
+                mkdir ./rustdesk/drivers
+                mv -Force .\rustdesk_printer_driver_v4-1.4 ./rustdesk/drivers/RustDeskPrinterDriver
+                Expand-Archive printer_driver_adapter.zip -DestinationPath .
+                mv -Force .\printer_driver_adapter.dll ./rustdesk
+            }
+          } catch {
+              Write-Host "Ignore printer driver error."
+          }
+
+      - name: Find Runner.res
+        continue-on-error: true
+        shell: bash
+        run: |
+          runner_res=$(find . -name "Runner.res");
+          if [ "$runner_res" != "" ]; then
+            echo "Runner.res: $runner_res";
+            cp $runner_res ./libs/portable/Runner.res;
+            ls -l ./libs/portable/Runner.res;
+          fi
+
+      - name: Build self-extracted portable executable
+        shell: bash
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-${{ env.VERSION }}-x86_64.exe
+
+      - name: Upload unsigned portable executable
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: kk-branded-windows-x64-portable
+          path: SignOutput/rustdesk-${{ env.VERSION }}-x86_64.exe
+
+      - name: Upload unsigned release directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: kk-branded-windows-x64-dir
+          path: rustdesk/
+
+
+  rust-unit-tests:
+    name: Rust unit tests (org defaults)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: "1.75"
+      - name: Compile and run unit tests
+        run: |
+          rustc --version
+          rustc --test integration-overlay/src/org_defaults.rs -o /tmp/org_defaults_test
+          /tmp/org_defaults_test
