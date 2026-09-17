@@ -1,34 +1,28 @@
-use hbb_common::config::Config;
+//! Organization server defaults for the branded attended-support client.
+//!
+//! Pure decision logic, no external dependencies: this file must compile
+//! standalone (`rustc --test src/org_defaults.rs`) so it can be unit-tested
+//! in CI without the hbb_common crate.
+//!
+//! Behavior:
+//! - Applied exactly once per machine (guarded by a marker option).
+//! - Fills only EMPTY options; user-entered values are never overwritten.
+//! - If an ID server is already configured from any other source, nothing is
+//!   applied at all (no mixing of someone else's config with our key).
+//! - A user can later change or CLEAR any value; the marker prevents the
+//!   defaults from ever being re-applied on subsequent launches.
+//!
+//! The caller (core_main) persists the returned pairs plus the marker via
+//! Config::set_option.
 
-/// Organization defaults for the branded attended-support client.
-///
-/// Applied exactly once per machine (guarded by a marker option):
-/// - Only fills options that are still EMPTY, so user-entered values are
-///   never overwritten.
-/// - If an ID server is already configured from any other source, nothing is
-///   applied at all (no mixing of someone else's config with our key).
-/// - A user can later change or CLEAR any value; the marker prevents the
-///   defaults from ever being re-applied on subsequent launches.
-
-const ORG_DEFAULTS_MARKER: &str = "org-defaults-applied";
-
-#[cfg(not(standalone_test))]
+pub const ORG_DEFAULTS_MARKER: &str = "org-defaults-applied";
 pub const ORG_ID_SERVER: &str = "rustdesk.zhendosinc.ru";
-#[cfg(not(standalone_test))]
 pub const ORG_RELAY_SERVER: &str = "rustdesk.zhendosinc.ru:21117";
-#[cfg(not(standalone_test))]
 pub const ORG_KEY: &str = "sb+BGxi80QpiMzSRuAAUzp1ulW0LJjLdu+6FWja4dB8=";
 
-#[cfg(standalone_test)]
-pub const ORG_ID_SERVER: &str = "rustdesk.zhendosinc.ru";
-#[cfg(standalone_test)]
-pub const ORG_RELAY_SERVER: &str = "rustdesk.zhendosinc.ru:21117";
-#[cfg(standalone_test)]
-pub const ORG_KEY: &str = "sb+BGxi80QpiMzSRuAAUzp1ulW0LJjLdu+6FWja4dB8=";
-
-/// Pure decision logic: returns the option values to write, or an empty Vec
-/// if the defaults must not be applied (already applied, or an ID server is
-/// already configured from another source). `options` maps name -> value.
+/// Returns the option values to write, or an empty Vec if the defaults must
+/// not be applied (already applied once, or an ID server is already
+/// configured from another source). `options` maps option name -> value.
 pub fn decide_defaults(
     options: &std::collections::HashMap<String, String>,
 ) -> Vec<(&'static str, String)> {
@@ -36,7 +30,8 @@ pub fn decide_defaults(
     if options.contains_key(ORG_DEFAULTS_MARKER) {
         return vec![];
     }
-    // Respect any pre-existing custom server configuration.
+    // Respect any pre-existing custom server configuration: do not mix it
+    // with our key.
     if !options
         .get("custom-rendezvous-server")
         .unwrap_or(&String::new())
@@ -45,33 +40,19 @@ pub fn decide_defaults(
     {
         return vec![];
     }
-    let mut out = Vec::new();
     let candidates: [(&'static str, &str); 3] = [
         ("custom-rendezvous-server", ORG_ID_SERVER),
         ("relay-server", ORG_RELAY_SERVER),
         ("key", ORG_KEY),
     ];
+    let mut out = Vec::new();
     for (name, default) in candidates {
-        let cur = options.get(name).unwrap_or(&String::new());
-        if cur.trim().is_empty() {
+        let current = options.get(name).unwrap_or(&String::new());
+        if current.trim().is_empty() {
             out.push((name, default.to_string()));
         }
     }
     out
-}
-
-#[cfg(not(standalone_test))]
-/// Applies the org defaults on first run. Safe to call on every startup.
-pub fn apply_once() {
-    let options = Config::get_options();
-    let updates = decide_defaults(&options);
-    if updates.is_empty() {
-        return;
-    }
-    for (name, value) in updates {
-        Config::set_option(name.to_string(), value);
-    }
-    Config::set_option(ORG_DEFAULTS_MARKER.to_string(), "1".to_string());
 }
 
 #[cfg(test)]
@@ -101,14 +82,27 @@ mod tests {
 
     #[test]
     fn second_run_never_reapplies() {
-        let mut o = opts(&[("custom-rendezvous-server", ORG_ID_SERVER)]);
-        o.insert(ORG_DEFAULTS_MARKER.into(), String::new());
+        let o = opts(&[
+            ("custom-rendezvous-server", ORG_ID_SERVER),
+            ("relay-server", ORG_RELAY_SERVER),
+            ("key", ORG_KEY),
+            (ORG_DEFAULTS_MARKER, "1"),
+        ]);
+        assert!(decide_defaults(&o).is_empty());
+    }
+
+    #[test]
+    fn marker_even_empty_blocks() {
+        let o = opts(&[(ORG_DEFAULTS_MARKER, "")]);
         assert!(decide_defaults(&o).is_empty());
     }
 
     #[test]
     fn existing_custom_server_blocks_defaults() {
-        let o = opts(&[("custom-rendezvous-server", "other.example.com"), ("key", "userkey")]);
+        let o = opts(&[
+            ("custom-rendezvous-server", "other.example.com"),
+            ("key", "userkey"),
+        ]);
         assert!(decide_defaults(&o).is_empty());
     }
 
@@ -128,6 +122,13 @@ mod tests {
         let out = decide_defaults(&o);
         assert!(!out.iter().any(|(k, _)| *k == "relay-server"));
         assert!(out.contains(&("custom-rendezvous-server", ORG_ID_SERVER.to_string())));
+        assert!(out.contains(&("key", ORG_KEY.to_string())));
+    }
+
+    #[test]
+    fn whitespace_only_counts_as_empty() {
+        let o = opts(&[("key", "   ")]);
+        let out = decide_defaults(&o);
         assert!(out.contains(&("key", ORG_KEY.to_string())));
     }
 
