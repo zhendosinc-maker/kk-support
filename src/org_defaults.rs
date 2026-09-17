@@ -32,9 +32,10 @@ pub fn decide_defaults(
     }
     // Respect any pre-existing custom server configuration: do not mix it
     // with our key.
+    let absent = String::new();
     if !options
         .get("custom-rendezvous-server")
-        .unwrap_or(&String::new())
+        .unwrap_or(&absent)
         .trim()
         .is_empty()
     {
@@ -47,7 +48,8 @@ pub fn decide_defaults(
     ];
     let mut out = Vec::new();
     for (name, default) in candidates {
-        let current = options.get(name).unwrap_or(&String::new());
+        let empty = String::new();
+        let current = options.get(name).unwrap_or(&empty);
         if current.trim().is_empty() {
             out.push((name, default.to_string()));
         }
