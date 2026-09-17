@@ -1,4 +1,4 @@
-name: KK Branded Client Build
+name: KK Portal Style Client Build
 
 on:
   workflow_dispatch:
@@ -170,6 +170,7 @@ jobs:
           Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_light.png -Force
           Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_dark.png -Force
           Copy-Item kk-overlay/brand-assets/favicon.ico flutter/windows/runner/resources/app_icon.ico -Force
+          Copy-Item kk-overlay/integration-overlay/flutter/lib/common.dart flutter/lib/common.dart -Force
 
       - name: Restore bridge files
         uses: actions/download-artifact@v4
@@ -250,6 +251,14 @@ jobs:
           name: topmostwindow-artifacts-x64
           path: ./rustdesk
 
+      - name: Validate branded Dart source
+        shell: pwsh
+        run: |
+          dart format --output=none flutter/lib/common.dart
+          if ($LASTEXITCODE -ne 0) { throw "Branded Dart syntax validation failed" }
+          $src = Get-Content flutter/lib/common.dart -Raw -Encoding UTF8
+          if (-not $src.Contains('0xFFE07B00') -or -not $src.Contains('Segoe UI')) { throw "Brand overlay missing" }
+
       - name: Build RustDesk
         run: |
           python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
@@ -303,19 +312,28 @@ jobs:
           python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
           popd
           mkdir -p ./SignOutput
-          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-${{ env.VERSION }}-x86_64.exe
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/KartoshkaSupport.exe
+
+      - name: Record portable checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash SignOutput/KartoshkaSupport.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  KartoshkaSupport.exe" | Set-Content SignOutput/SHA256SUMS.txt -Encoding ascii
+          Write-Host "SHA256: $hash"
 
       - name: Upload unsigned portable executable
         uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
-          name: kk-branded-windows-x64-portable
-          path: SignOutput/rustdesk-${{ env.VERSION }}-x86_64.exe
+          name: KartoshkaSupport-windows-x64-portable
+          path: |
+            SignOutput/KartoshkaSupport.exe
+            SignOutput/SHA256SUMS.txt
 
       - name: Upload unsigned release directory
         uses: actions/upload-artifact@v4
         with:
-          name: kk-branded-windows-x64-dir
+          name: KartoshkaSupport-windows-x64-dir
           path: rustdesk/
 
 
