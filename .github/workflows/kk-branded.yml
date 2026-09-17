@@ -36,7 +36,9 @@ jobs:
         with:
           path: kk-overlay
           persist-credentials: false
-          sparse-checkout: integration-overlay
+          sparse-checkout: |
+            integration-overlay
+            brand-assets
       - name: Apply exact reviewed source overlay
         shell: bash
         run: |
@@ -44,14 +46,6 @@ jobs:
           cp kk-overlay/integration-overlay/src/common.rs src/common.rs
           cp kk-overlay/integration-overlay/src/lib.rs src/lib.rs
 
-      - name: Prepare brand assets
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force flutter/assets | Out-Null
-          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo.png -Force
-          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_light.png -Force
-          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_dark.png -Force
-          Copy-Item kk-overlay/brand-assets/icon-512x512.png flutter/windows/runner/resources/app_icon.ico -Force
 
       - name: Install system dependencies
         run: |
@@ -158,13 +152,24 @@ jobs:
         with:
           path: kk-overlay
           persist-credentials: false
-          sparse-checkout: integration-overlay
+          sparse-checkout: |
+            integration-overlay
+            brand-assets
       - name: Apply exact reviewed source overlay
         shell: bash
         run: |
           cp kk-overlay/integration-overlay/src/org_defaults.rs src/org_defaults.rs
           cp kk-overlay/integration-overlay/src/common.rs src/common.rs
           cp kk-overlay/integration-overlay/src/lib.rs src/lib.rs
+
+      - name: Prepare brand assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force flutter/assets | Out-Null
+          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo.png -Force
+          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_light.png -Force
+          Copy-Item kk-overlay/brand-assets/icon-256x256.png flutter/assets/logo_dark.png -Force
+          Copy-Item kk-overlay/brand-assets/favicon.ico flutter/windows/runner/resources/app_icon.ico -Force
 
       - name: Restore bridge files
         uses: actions/download-artifact@v4
