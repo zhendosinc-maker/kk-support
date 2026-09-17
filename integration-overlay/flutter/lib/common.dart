@@ -582,7 +582,9 @@ class MyTheme {
   );
 
   static ThemeMode getThemeModePreference() {
-    return themeModeFromString(bind.mainGetLocalOption(key: kCommConfKeyTheme));
+    final saved = bind.mainGetLocalOption(key: kCommConfKeyTheme);
+    if (isWindows && saved.isEmpty) return ThemeMode.dark;
+    return themeModeFromString(saved);
   }
 
   static Future<void> changeDarkMode(ThemeMode mode) async {
@@ -3994,7 +3996,7 @@ bool get isCustomClient {
 }
 
 get defaultOptionLang => isCustomClient ? 'default' : '';
-get defaultOptionTheme => isCustomClient ? 'system' : '';
+get defaultOptionTheme => (isWindows || isCustomClient) ? 'system' : '';
 get defaultOptionYes => isCustomClient ? 'Y' : '';
 get defaultOptionNo => isCustomClient ? 'N' : '';
 get defaultOptionWhitelist => isCustomClient ? ',' : '';
