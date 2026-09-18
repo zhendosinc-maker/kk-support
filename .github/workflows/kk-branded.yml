@@ -172,6 +172,7 @@ jobs:
           Copy-Item kk-overlay/brand-assets/favicon.ico flutter/windows/runner/resources/app_icon.ico -Force
           Copy-Item kk-overlay/integration-overlay/flutter/lib/common.dart flutter/lib/common.dart -Force
           Copy-Item kk-overlay/integration-overlay/flutter/lib/desktop/pages/desktop_home_page.dart flutter/lib/desktop/pages/desktop_home_page.dart -Force
+          Copy-Item kk-overlay/integration-overlay/flutter/windows/runner/main.cpp flutter/windows/runner/main.cpp -Force
 
       - name: Restore bridge files
         uses: actions/download-artifact@v4
